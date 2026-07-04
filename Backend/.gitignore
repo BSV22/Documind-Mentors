@@ -1,8 +1,11 @@
 # Environment variables
 .env
 
-# Vector store and uploaded documents
-data/
+# Ignore everything inside data/
+data/*
+
+# But keep the folder itself
+!data/.gitkeep
 
 # Python cache
 __pycache__/
@@ -11,10 +14,6 @@ __pycache__/
 # Virtual environments
 venv/
 .venv/
-env/
 
 # VS Code
 .vscode/
-
-# macOS
-.DS_Store
