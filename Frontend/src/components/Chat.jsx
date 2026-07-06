@@ -76,15 +76,15 @@ export default function Chat() {
     }
 
     return (
-        <div className="flex flex-col h-[calc(100vh-140px)] w-full rounded-2xl overflow-hidden shadow-xl border border-gray-700 bg-gray-800">
+        <div className="flex flex-col h-full w-full  rounded-2xl overflow-hidden shadow-xl border border-gray-700 bg-gray-800">
             {/* Header */}
-            <div className="px-6 py-4 bg-gray-900 text-white flex items-center justify-between border-b border-gray-700">
-                <h2 className="font-semibold text-lg">Documind Chatbot</h2>
-                <span className="text-sm text-green-400">● Online</span>
+            <div className="px-4 py-3 bg-gray-900 text-white flex items-center justify-between border-b border-gray-700">
+                <h2 className="font-semibold text-base">Documind Chatbot</h2>
+                <span className="text-xs text-green-400">● Online</span>
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-6 py-4 scrollbar-thumb-cyan-600 space-y-4">
+            <div className="flex-1 overflow-y-auto px-4 py-3 scrollbar-thumb-cyan-600 space-y-3">
                 {messages.map((m) => (
                     <div
                         key={m.id}
@@ -92,7 +92,7 @@ export default function Chat() {
                             }`}
                     >
                         <div
-                            className={`max-w-[75%] px-4 py-3 rounded-2xl ${m.from === "user"
+                            className={`max-w-[75%] px-3 py-2 rounded-2xl ${m.from === "user"
                                 ? "bg-blue-600 text-white rounded-br-sm"
                                 : "bg-gray-700 text-gray-100 rounded-bl-sm"
                                 }`}
@@ -106,8 +106,8 @@ export default function Chat() {
             </div>
 
             {/* Input */}
-            <div className="border-t border-gray-700 bg-gray-900 p-4">
-                <div className="flex items-end gap-3 rounded-2xl border border-gray-700 bg-gray-800 px-4 py-3">
+            <div className="border-t border-gray-700 bg-gray-900 p-3">
+                <div className="flex items-end gap-2 rounded-2xl border border-gray-700 bg-gray-800 px-3 py-2">
                     <textarea
                         ref={textareaRef}
                         value={input}
@@ -115,11 +115,11 @@ export default function Chat() {
                         onKeyDown={onKeyDown}
                         rows={1}
                         placeholder="Send a message..."
-                        className="flex-1 min-h-[24px] max-h-40 resize-none overflow-y-auto bg-transparent text-white placeholder-gray-400 outline-none leading-6 py-1 scrollbar-none"
+                        className="flex-1 min-h-5 max-h-32 resize-none overflow-y-auto bg-transparent text-white placeholder-gray-400 outline-none leading-6 py-1 scrollbar-none"
                     />
                     <button
                         onClick={send}
-                        className="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-5 py-2 rounded-lg"
+                        className="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg text-sm"
                     >
                         Send
                     </button>
