@@ -1,70 +1,58 @@
 import { createContext, useState, useEffect, useCallback, useContext } from 'react';
-import { jwtDecode } from 'jwt-decode';
+import { apiGet, apiPost } from '../utils/api';
 
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Initialize from localStorage on mount
+  // Initialize from session check on mount
   useEffect(() => {
-    const storedToken = localStorage.getItem('authToken');
-    if (storedToken) {
+    const checkSession = async () => {
       try {
-        const decoded = jwtDecode(storedToken);
-        // Check if token is expired
-        if (decoded.exp * 1000 > Date.now()) {
-          setToken(storedToken);
-          setUser(decoded);
-        } else {
-          // Token expired, clear it
-          localStorage.removeItem('authToken');
+        const data = await apiGet('/api/auth/me');
+        if (data && data.user) {
+          setUser(data.user);
         }
       } catch (err) {
-        console.error('Failed to decode token:', err);
-        localStorage.removeItem('authToken');
+        console.log('No active session found.');
+      } finally {
+        setLoading(false);
       }
-    }
-    setLoading(false);
+    };
+    checkSession();
   }, []);
 
   const login = useCallback((token, userData = null) => {
-    try {
-      const decoded = userData || jwtDecode(token);
-      setToken(token);
-      setUser(decoded);
-      localStorage.setItem('authToken', token);
-      setError(null);
-      return true;
-    } catch (err) {
-      console.error('Login failed:', err);
-      setError('Invalid token');
-      return false;
-    }
+    // userData contains the user details returned from backend signin/signup/google endpoints
+    setUser(userData);
+    setError(null);
+    return true;
   }, []);
 
-  const logout = useCallback(() => {
-    setToken(null);
+  const logout = useCallback(async () => {
+    try {
+      await apiPost('/api/auth/signout');
+    } catch (err) {
+      console.error('Signout request failed:', err);
+    }
     setUser(null);
-    localStorage.removeItem('authToken');
   }, []);
 
   const signup = useCallback((token, userData) => {
-    return login(token, userData);
+    return login(null, userData);
   }, [login]);
 
   const value = {
     user,
-    token,
     loading,
     error,
     login,
     logout,
     signup,
-    isAuthenticated: !!token,
+    isAuthenticated: !!user,
   };
 
   return (

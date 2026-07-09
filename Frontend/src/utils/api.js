@@ -1,34 +1,27 @@
 /**
- * Utility for making authenticated API requests with JWT tokens
+ * Utility for making authenticated API requests with HttpOnly cookies
  */
 
 export const apiCall = async (endpoint, options = {}) => {
-  const token = localStorage.getItem('authToken');
-  
   const headers = {
     'Content-Type': 'application/json',
     ...options.headers,
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   try {
     const response = await fetch(endpoint, {
       ...options,
       headers,
+      credentials: 'same-origin',
     });
 
     if (response.status === 401) {
-      // Token expired or invalid, clear it
-      localStorage.removeItem('authToken');
-      window.location.href = '/login';
       throw new Error('Unauthorized - please log in again');
     }
 
     if (!response.ok) {
-      throw new Error(`API call failed: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `API call failed: ${response.status}`);
     }
 
     const data = await response.json();
@@ -40,7 +33,7 @@ export const apiCall = async (endpoint, options = {}) => {
 };
 
 /**
- * POST request with JWT authentication
+ * POST request with cookie authentication
  */
 export const apiPost = (endpoint, body, options = {}) => {
   return apiCall(endpoint, {
@@ -51,7 +44,7 @@ export const apiPost = (endpoint, body, options = {}) => {
 };
 
 /**
- * GET request with JWT authentication
+ * GET request with cookie authentication
  */
 export const apiGet = (endpoint, options = {}) => {
   return apiCall(endpoint, {
@@ -61,7 +54,7 @@ export const apiGet = (endpoint, options = {}) => {
 };
 
 /**
- * PUT request with JWT authentication
+ * PUT request with cookie authentication
  */
 export const apiPut = (endpoint, body, options = {}) => {
   return apiCall(endpoint, {
@@ -72,7 +65,7 @@ export const apiPut = (endpoint, body, options = {}) => {
 };
 
 /**
- * DELETE request with JWT authentication
+ * DELETE request with cookie authentication
  */
 export const apiDelete = (endpoint, options = {}) => {
   return apiCall(endpoint, {

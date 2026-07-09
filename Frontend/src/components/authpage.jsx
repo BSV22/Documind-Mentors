@@ -1,6 +1,7 @@
 import { useState, useContext } from "react";
 import { GoogleLogin } from "@react-oauth/google";
 import { AuthContext } from "../context/AuthContext";
+import { apiPost } from "../utils/api";
 
 export default function AuthPage({ onAuthSuccess }) {
   const auth = useContext(AuthContext);
@@ -18,7 +19,6 @@ export default function AuthPage({ onAuthSuccess }) {
     setLocalError("");
     
     try {
-      // In production, send credentials to your backend
       const endpoint = mode === "signIn" ? "/api/auth/signin" : "/api/auth/signup";
       const payload = {
         email,
@@ -26,22 +26,11 @@ export default function AuthPage({ onAuthSuccess }) {
         ...(mode === "signUp" && { name }),
       };
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const data = await apiPost(endpoint, payload);
 
-      if (!response.ok) {
-        throw new Error("Authentication failed");
-      }
-
-      const data = await response.json();
-      const { token, user } = data;
-
-      // Store token and user in context
-      auth.login(token, user);
-      onAuthSuccess?.(user);
+      // Store user in context
+      auth.login(null, data.user);
+      onAuthSuccess?.(data.user);
     } catch (err) {
       setLocalError(err.message || "Authentication failed");
       console.error("Auth error:", err);
@@ -55,23 +44,11 @@ export default function AuthPage({ onAuthSuccess }) {
     setLocalError("");
     try {
       const jwtToken = credentialResponse.credential;
-      // Send token to your backend for verification and user creation
-      const response = await fetch("/api/auth/google", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: jwtToken }),
-      });
+      const data = await apiPost("/api/auth/google", { token: jwtToken });
 
-      if (!response.ok) {
-        throw new Error("Google authentication failed");
-      }
-
-      const data = await response.json();
-      const { token, user } = data;
-
-      // Store token and user in context
-      auth.login(token, user);
-      onAuthSuccess?.(user);
+      // Store user in context
+      auth.login(null, data.user);
+      onAuthSuccess?.(data.user);
     } catch (err) {
       setLocalError(err.message || "Google login failed");
       console.error("Google auth error:", err);
@@ -141,10 +118,11 @@ export default function AuthPage({ onAuthSuccess }) {
             {localError}
           </div>
         )}
-          <div className="h-px flex-1 bg-slate-700"></div>
-          <span className="text-xs text-slate-500 uppercase tracking-[0.2em]">or continue with email</span>
-          <div className="h-px flex-1 bg-slate-700"></div>
-        </div>
+          <div className="flex items-center gap-4 mb-6">
+            <div className="h-px flex-1 bg-slate-700"></div>
+            <span className="text-xs text-slate-500 uppercase tracking-[0.2em]">or continue with email</span>
+            <div className="h-px flex-1 bg-slate-700"></div>
+          </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === "signUp" && (
@@ -216,6 +194,7 @@ export default function AuthPage({ onAuthSuccess }) {
           </p>
         </div>
       </div>
+    </div>
   );
 }
 

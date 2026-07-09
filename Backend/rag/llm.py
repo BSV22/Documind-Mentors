@@ -7,7 +7,7 @@ client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 class LLM:
 
     def __init__(self,
-                 model="models/gemini-3.5-flash"):
+                 model="gemini-2.5-flash"):
 
         self.model = model
 

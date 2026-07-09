@@ -9,11 +9,15 @@ class Retriever:
 
     def retrieve(self,
                  question,
+                 user_id=None,
                  top_k=3):
 
         query_embedding = self.embedding_model.embed(question)
 
+        filter_dict = {"user_id": user_id} if user_id is not None else None
+
         return self.vector_store.search(
             query_embedding,
-            top_k
+            k=top_k,
+            filter_dict=filter_dict
         )
