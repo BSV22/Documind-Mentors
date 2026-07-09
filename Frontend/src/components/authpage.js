@@ -1,4 +1,6 @@
-import { useState, useContext } from "react";
+"use client";
+
+import { useState, useEffect, useContext } from "react";
 import { GoogleLogin } from "@react-oauth/google";
 import { AuthContext } from "../context/AuthContext";
 import { apiPost } from "../utils/api";
@@ -12,6 +14,14 @@ export default function AuthPage({ onAuthSuccess }) {
   const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
   const [localError, setLocalError] = useState("");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setMounted(true);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -82,7 +92,7 @@ export default function AuthPage({ onAuthSuccess }) {
             <button
               type="button"
               onClick={() => setMode("signIn")}
-              className={`flex-1 rounded-3xl px-4 py-3 transition ${
+              className={`flex-1 rounded-3xl px-4 py-3 transition cursor-pointer ${
                 mode === "signIn"
                   ? "bg-cyan-500 text-slate-950"
                   : "hover:bg-slate-800"
@@ -93,7 +103,7 @@ export default function AuthPage({ onAuthSuccess }) {
             <button
               type="button"
               onClick={() => setMode("signUp")}
-              className={`flex-1 rounded-3xl px-4 py-3 transition ${
+              className={`flex-1 rounded-3xl px-4 py-3 transition cursor-pointer ${
                 mode === "signUp"
                   ? "bg-cyan-500 text-slate-950"
                   : "hover:bg-slate-800"
@@ -105,12 +115,14 @@ export default function AuthPage({ onAuthSuccess }) {
         </div>
 
         <div className="mb-6 flex justify-center">
-          <GoogleLogin
-            onSuccess={handleGoogleSuccess}
-            onError={handleGoogleError}
-            theme="dark"
-            size="large"
-          />
+          {mounted && (
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={handleGoogleError}
+              theme="dark"
+              size="large"
+            />
+          )}
         </div>
 
         {localError && (
@@ -182,7 +194,7 @@ export default function AuthPage({ onAuthSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-3xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full rounded-3xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading ? "Loading..." : mode === "signIn" ? "Sign In" : "Create Account"}
           </button>
@@ -197,4 +209,3 @@ export default function AuthPage({ onAuthSuccess }) {
     </div>
   );
 }
-

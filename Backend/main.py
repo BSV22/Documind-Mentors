@@ -1,9 +1,9 @@
 from dotenv import load_dotenv
 import os
-import sqlite3
 import uuid
 import shutil
 import datetime
+import json
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -12,8 +12,11 @@ load_dotenv()
 
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import bcrypt
 import jwt
+import psycopg2
+import psycopg2.extras
 from google.oauth2 import id_token
 from google.auth.transport import requests
 
@@ -26,40 +29,13 @@ from rag.retriever import Retriever
 from rag.prompt import PromptBuilder
 from rag.llm import LLM
 
-# Configure files and database paths
-DB_PATH = "data/db.sqlite"
-CACHE_FILE = "data/vector_store.json"
+# Configure paths and database URLs
+DATABASE_URL = os.getenv("DATABASE_URL")
 JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-key-change-in-production")
 ALGORITHM = "HS256"
 
 # Initialize global RAG components
 store = VectorStore()
-
-# Load vector store from cache or create from sample PDF if no cache exists
-if os.path.exists(CACHE_FILE):
-    print("Loading vector store from cache...")
-    store.load(CACHE_FILE)
-else:
-    print("Creating vector store from default PDF...")
-    sample_pdf = "data/sample.pdf"
-    if os.path.exists(sample_pdf):
-        try:
-            loader = PDFLoader()
-            document = loader.load(sample_pdf)
-            chunker = TextChunker()
-            chunks = chunker.chunk(document)
-            embedding = GeminiEmbedding()
-            for i, chunk in enumerate(chunks):
-                print(f"Embedding chunk {i+1}/{len(chunks)}...")
-                vector = embedding.embed(chunk)
-                # Public chunks have no user_id or doc_id
-                store.add(chunk, vector, {"filename": "sample.pdf"})
-            store.save(CACHE_FILE)
-        except Exception as e:
-            print("Error indexing default sample PDF:", e)
-    else:
-        print("Default PDF sample.pdf not found in data/.")
-
 embedding = GeminiEmbedding()
 retriever = Retriever(embedding, store)
 
@@ -75,53 +51,87 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize SQLite database
-def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            email TEXT UNIQUE,
-            password_hash TEXT,
-            google_sub TEXT UNIQUE
-        );
-        """)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS documents (
-            id TEXT PRIMARY KEY,
-            filename TEXT,
-            upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            user_id INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents(user_id);")
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS chats (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            user_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id);")
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            chat_id TEXT,
-            from_user BOOLEAN,
-            text TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(chat_id) REFERENCES chats(id)
-        );
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);")
-        conn.commit()
+from contextlib import contextmanager
+from psycopg2.pool import ThreadedConnectionPool
 
+# Initialize ThreadedConnectionPool for fast connection reuse and to prevent leaks
+db_pool = None
+
+def init_db_pool():
+    global db_pool
+    if not DATABASE_URL:
+        return
+    try:
+        db_pool = ThreadedConnectionPool(
+            minconn=2,
+            maxconn=15,
+            dsn=DATABASE_URL
+        )
+    except Exception as e:
+        print("Failed to initialize database connection pool:", e)
+
+# Run pool initialization
+init_db_pool()
+
+@contextmanager
+def get_db_connection():
+    global db_pool
+    if not db_pool:
+        # Fallback to direct connection if pool is not initialized
+        if not DATABASE_URL:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="DATABASE_URL environment variable is not configured. Please set it in Backend/.env"
+            )
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SET search_path TO documind, public;")
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+    else:
+        conn = db_pool.getconn()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SET search_path TO documind, public;")
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            db_pool.putconn(conn)
+
+# Initialize PostgreSQL database
+def init_db():
+    if not DATABASE_URL:
+        print("DATABASE_URL is not set. Skipping schema initialization...")
+        return
+    try:
+        print("Initializing PostgreSQL database...")
+        schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
+        if not os.path.exists(schema_path):
+            print(f"schema.sql not found at {schema_path}")
+            return
+            
+        with open(schema_path, "r") as f:
+            schema_sql = f.read()
+            
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(schema_sql)
+            conn.commit()
+        print("Database schema initialized successfully.")
+    except Exception as e:
+        print("WARNING: Database schema initialization failed. Is the database URL/credentials correct?")
+        print("Error details:", e)
+
+# Run schema initialization
 init_db()
 
 # JWT Helpers
@@ -153,6 +163,25 @@ def get_current_user(request: Request):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
         )
+    
+    # Verify user exists in the database
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id FROM users WHERE id = %s", (payload.get("id"),))
+                if not cursor.fetchone():
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User session is invalid. Please sign in again.",
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database user validation failed: {str(e)}"
+        )
+        
     return payload
 
 # Pydantic Schemas
@@ -188,16 +217,18 @@ def verify_password(password: str, hashed: str) -> bool:
 def signup(req: SignupRequest, response: Response):
     hashed = hash_password(req.password)
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-                (req.name, req.email, hashed)
-            )
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO users (name, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
+                    (req.name, req.email, hashed)
+                )
+                user_id = cursor.fetchone()[0]
             conn.commit()
-            user_id = cursor.lastrowid
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
         raise HTTPException(status_code=400, detail="Email already registered")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
     user_data = {"id": user_id, "email": req.email, "name": req.name}
     token = create_access_token(user_data)
@@ -214,11 +245,13 @@ def signup(req: SignupRequest, response: Response):
 
 @app.post("/api/auth/signin")
 def signin(req: SigninRequest, response: Response):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, email, password_hash FROM users WHERE email = ?", (req.email,))
-        user = cursor.fetchone()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id, name, email, password_hash FROM users WHERE email = %s", (req.email,))
+                user = cursor.fetchone()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
         
     if not user or not user["password_hash"]:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -252,25 +285,27 @@ def google_auth(req: GoogleAuthRequest, response: Response):
         print("Google token verification failed:", e)
         raise HTTPException(status_code=401, detail=f"Google authentication failed: {str(e)}")
         
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, email FROM users WHERE google_sub = ? OR email = ?", (sub, email))
-        user = cursor.fetchone()
-        
-        if not user:
-            cursor.execute(
-                "INSERT INTO users (name, email, google_sub) VALUES (?, ?, ?)",
-                (name, email, sub)
-            )
-            conn.commit()
-            user_id = cursor.lastrowid
-            user_name = name
-        else:
-            user_id = user["id"]
-            user_name = user["name"]
-            cursor.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, user_id))
-            conn.commit()
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id, name, email FROM users WHERE google_sub = %s OR email = %s", (sub, email))
+                user = cursor.fetchone()
+                
+                if not user:
+                    cursor.execute(
+                        "INSERT INTO users (name, email, google_sub) VALUES (%s, %s, %s) RETURNING id",
+                        (name, email, sub)
+                    )
+                    user_id = cursor.fetchone()[0]
+                    user_name = name
+                    conn.commit()
+                else:
+                    user_id = user["id"]
+                    user_name = user["name"]
+                    cursor.execute("UPDATE users SET google_sub = %s WHERE id = %s", (sub, user_id))
+                    conn.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
             
     user_data = {"id": user_id, "email": email, "name": user_name}
     token = create_access_token(user_data)
@@ -297,12 +332,14 @@ def signout(response: Response):
 # Document Management Endpoints
 @app.get("/api/documents")
 def get_documents(current_user: dict = Depends(get_current_user)):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, filename, upload_time FROM documents WHERE user_id = ? ORDER BY upload_time DESC", (current_user["id"],))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id, filename, upload_time FROM documents WHERE user_id = %s ORDER BY upload_time DESC", (current_user["id"],))
+                rows = cursor.fetchall()
+                return [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/documents")
 async def upload_document(
@@ -328,24 +365,30 @@ async def upload_document(
         chunks = chunker.chunk(document)
         
         embedding_model = GeminiEmbedding()
+        embeddings = []
         for chunk in chunks:
             vector = embedding_model.embed(chunk)
-            metadata = {
-                "user_id": current_user["id"],
-                "doc_id": doc_id,
-                "filename": file.filename
-            }
-            store.add(chunk, vector, metadata)
+            embeddings.append(vector)
             
-        store.save(CACHE_FILE)
-        
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO documents (id, filename, user_id) VALUES (?, ?, ?)",
-                (doc_id, file.filename, current_user["id"])
-            )
+        # First insert document metadata row (satisfying FK constraints on child chunks)
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO documents (id, filename, user_id) VALUES (%s, %s, %s)",
+                    (doc_id, file.filename, current_user["id"])
+                )
             conn.commit()
+            
+        try:
+            # Then bulk index chunks in PostgreSQL
+            store.add_chunks_batch(chunks, embeddings, doc_id, current_user["id"])
+        except Exception as e:
+            # Clean up the document record if chunk indexing fails
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+                conn.commit()
+            raise e
             
         return {"id": doc_id, "filename": file.filename}
     except Exception as e:
@@ -356,108 +399,166 @@ async def upload_document(
 
 @app.delete("/api/documents/{doc_id}")
 def delete_document(doc_id: str, current_user: dict = Depends(get_current_user)):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, filename FROM documents WHERE id = ? AND user_id = ?", (doc_id, current_user["id"]))
-        doc = cursor.fetchone()
-        
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-        
-    store.delete_document(doc_id)
-    store.save(CACHE_FILE)
-    
-    file_path = f"data/documents/{doc_id}.pdf"
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
-        conn.commit()
-        
-    return {"status": "success"}
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id, filename FROM documents WHERE id = %s AND user_id = %s", (doc_id, current_user["id"]))
+                doc = cursor.fetchone()
+                
+            if not doc:
+                raise HTTPException(status_code=404, detail="Document not found")
+                
+            # Remove from vector store (cascading deletes in DB schema will handle the database row cleanup if configured, but let's do it explicitly)
+            store.delete_document(doc_id)
+            
+            file_path = f"data/documents/{doc_id}.pdf"
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                
+            with conn.cursor() as cursor:
+                cursor.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+            conn.commit()
+            
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
 # Chat & Conversation History Endpoints
 @app.get("/api/chats")
 def get_chats(current_user: dict = Depends(get_current_user)):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, title, created_at FROM chats WHERE user_id = ? ORDER BY created_at DESC", (current_user["id"],))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id, title, created_at FROM chats WHERE user_id = %s ORDER BY created_at DESC", (current_user["id"],))
+                rows = cursor.fetchall()
+                return [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.post("/api/chats")
 def create_chat(req: CreateChatRequest, current_user: dict = Depends(get_current_user)):
     chat_id = str(uuid.uuid4())
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO chats (id, title, user_id) VALUES (?, ?, ?)", (chat_id, req.title, current_user["id"]))
-        conn.commit()
-    return {"id": chat_id, "title": req.title}
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("INSERT INTO chats (id, title, user_id) VALUES (%s, %s, %s)", (chat_id, req.title, current_user["id"]))
+            conn.commit()
+        return {"id": chat_id, "title": req.title}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.delete("/api/chats/{chat_id}")
 def delete_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM chats WHERE id = ? AND user_id = ?", (chat_id, current_user["id"]))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Chat not found")
-        cursor.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
-        cursor.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
-        conn.commit()
-    return {"status": "success"}
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id FROM chats WHERE id = %s AND user_id = %s", (chat_id, current_user["id"]))
+                if not cursor.fetchone():
+                    raise HTTPException(status_code=404, detail="Chat not found")
+                # Cascade delete deletes messages from the database
+                cursor.execute("DELETE FROM chats WHERE id = %s", (chat_id,))
+            conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/api/chats/{chat_id}/messages")
 def get_messages(chat_id: str, current_user: dict = Depends(get_current_user)):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM chats WHERE id = ? AND user_id = ?", (chat_id, current_user["id"]))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Chat not found")
-            
-        cursor.execute("SELECT id, from_user, text, timestamp FROM messages WHERE chat_id = ? ORDER BY timestamp ASC", (chat_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id FROM chats WHERE id = %s AND user_id = %s", (chat_id, current_user["id"]))
+                if not cursor.fetchone():
+                    raise HTTPException(status_code=404, detail="Chat not found")
+                    
+                cursor.execute("SELECT id, from_user, text, timestamp FROM messages WHERE chat_id = %s ORDER BY timestamp ASC", (chat_id,))
+                rows = cursor.fetchall()
+                return [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+def detect_intent(message: str) -> str:
+    prompt = f"""
+Analyze the following user question and categorize it into one of two options:
+- 'DOCUMENT_INQUIRY': If the question is about specific content, data, facts, documents, or files that the user uploaded or refers to.
+- 'GREETINGS_AND_GENERAL': If the question is a greeting (e.g. 'hello', 'hi'), conversational chit-chat, or a generic question that doesn't need external document references (e.g., 'what is RAG?', 'how are you?', 'tell me a joke').
+
+Question: "{message}"
+
+Respond with ONLY the exact string 'DOCUMENT_INQUIRY' or 'GREETINGS_AND_GENERAL'.
+"""
+    try:
+        response = LLM().generate(prompt).strip()
+        if "DOCUMENT_INQUIRY" in response:
+            return "DOCUMENT_INQUIRY"
+        return "GREETINGS_AND_GENERAL"
+    except Exception as e:
+        print("Intent detection failed, defaulting to DOCUMENT_INQUIRY:", e)
+        return "DOCUMENT_INQUIRY"
+
+async def event_generator(chat_id: str, message: str, user_id: int):
+    # 1. Detect Intent to avoid unnecessary retrieval
+    intent = detect_intent(message)
+    print(f"Query Intent: {intent}")
+    
+    if intent == "DOCUMENT_INQUIRY":
+        # Retrieve top-5 contexts using Hybrid Search (pgvector + FTS)
+        contexts = retriever.retrieve(message, user_id=user_id, top_k=5)
+        prompt = PromptBuilder().build(message, contexts)
+    else:
+        # Bypasses database retrieval completely
+        prompt = f"""You are a helpful assistant. Provide a conversational or general answer to the user's message.
+User Message: {message}
+"""
+
+    accumulated_response = ""
+    try:
+        llm = LLM()
+        for chunk in llm.generate_stream(prompt):
+            accumulated_response += chunk
+            yield f"data: {json.dumps({'text': chunk})}\n\n"
+    except Exception as e:
+        print("LLM stream generation failed:", e)
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        return
+
+    # 4. Save messages to DB on completion
+    user_msg_id = str(uuid.uuid4())
+    bot_msg_id = str(uuid.uuid4())
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO messages (id, chat_id, from_user, text) VALUES (%s, %s, TRUE, %s)",
+                    (user_msg_id, chat_id, message)
+                )
+                cur.execute(
+                    "INSERT INTO messages (id, chat_id, from_user, text) VALUES (%s, %s, FALSE, %s)",
+                    (bot_msg_id, chat_id, accumulated_response)
+                )
+            conn.commit()
+    except Exception as db_e:
+        print("Failed to save streamed chat messages to DB:", db_e)
+        
+    yield "data: [DONE]\n\n"
 
 @app.post("/api/chat")
 def chat_query(req: ChatRequest, current_user: dict = Depends(get_current_user)):
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM chats WHERE id = ? AND user_id = ?", (req.chat_id, current_user["id"]))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Chat not found")
-            
-    # Retrieve relevant contexts
-    contexts = retriever.retrieve(req.message, user_id=current_user["id"])
-    
-    prompt = PromptBuilder().build(req.message, contexts)
-    
     try:
-        answer = LLM().generate(prompt)
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id FROM chats WHERE id = %s AND user_id = %s", (req.chat_id, current_user["id"]))
+                if not cursor.fetchone():
+                    raise HTTPException(status_code=404, detail="Chat not found")
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print("LLM generation failed:", e)
-        raise HTTPException(status_code=500, detail=f"LLM generation failed: {str(e)}")
-        
-    user_msg_id = str(uuid.uuid4())
-    bot_msg_id = str(uuid.uuid4())
-    
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO messages (id, chat_id, from_user, text) VALUES (?, ?, 1, ?)",
-            (user_msg_id, req.chat_id, req.message)
-        )
-        cursor.execute(
-            "INSERT INTO messages (id, chat_id, from_user, text) VALUES (?, ?, 0, ?)",
-            (bot_msg_id, req.chat_id, answer)
-        )
-        conn.commit()
-        
-    return {"answer": answer}
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+            
+    return StreamingResponse(
+        event_generator(req.chat_id, req.message, current_user["id"]),
+        media_type="text/event-stream"
+    )
 
 if __name__ == "__main__":
     import uvicorn

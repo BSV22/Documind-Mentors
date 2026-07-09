@@ -16,6 +16,7 @@ export const apiCall = async (endpoint, options = {}) => {
     });
 
     if (response.status === 401) {
+      // In client side Next.js, we don't force redirect immediately unless handled globally
       throw new Error('Unauthorized - please log in again');
     }
 

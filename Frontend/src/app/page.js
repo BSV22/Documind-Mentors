@@ -1,16 +1,17 @@
-import { useState } from 'react'
-import './App.css'
-import Navbar from './components/navbar'
-import Footer from './components/footer'
-import Chat from './components/Chat'
-import Sidebar from './components/Sidebar'
-import AuthPage from './components/authpage'
-import { useAuth } from './context/AuthContext'
+"use client";
 
-function App() {
-  const { isAuthenticated, loading } = useAuth()
-  const [showSidebar, setShowSidebar] = useState(true)
-  const [activeChatId, setActiveChatId] = useState(null)
+import { useState } from 'react';
+import Navbar from '../components/navbar';
+import Footer from '../components/footer';
+import Chat from '../components/Chat';
+import Sidebar from '../components/Sidebar';
+import AuthPage from '../components/authpage';
+import { useAuth } from '../context/AuthContext';
+
+export default function Home() {
+  const { isAuthenticated, loading } = useAuth();
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [activeChatId, setActiveChatId] = useState(null);
 
   if (loading) {
     return (
@@ -20,11 +21,11 @@ function App() {
           <p className="text-sm tracking-wider text-gray-400">LOADING DOCUMIND...</p>
         </div>
       </div>
-    )
+    );
   }
 
   if (!isAuthenticated) {
-    return <AuthPage />
+    return <AuthPage />;
   }
 
   return (
@@ -49,7 +50,5 @@ function App() {
 
       <Footer />
     </>
-  )
+  );
 }
-
-export default App

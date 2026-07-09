@@ -1,5 +1,7 @@
+"use client";
+
 import { useState, useRef, useEffect } from "react";
-import { apiGet, apiPost } from "../utils/api";
+import { apiGet } from "../utils/api";
 
 export default function Chat({ activeChatId }) {
     const [messages, setMessages] = useState([]);
@@ -13,8 +15,10 @@ export default function Chat({ activeChatId }) {
     // Fetch Messages when activeChatId changes
     useEffect(() => {
         if (!activeChatId) {
-            setMessages([]);
-            return;
+            const timer = setTimeout(() => {
+                setMessages([]);
+            }, 0);
+            return () => clearTimeout(timer);
         }
 
         const fetchMessages = async () => {
@@ -70,8 +74,9 @@ export default function Chat({ activeChatId }) {
         if (!input.trim() || !activeChatId || loading) return;
 
         const userMsgText = input.trim();
+        const userMsgId = String(Date.now());
         const userMsg = {
-            id: Date.now(),
+            id: userMsgId,
             from: "user",
             text: userMsgText,
         };
@@ -87,32 +92,111 @@ export default function Chat({ activeChatId }) {
             }
         });
 
+        // Create a unique temporary ID for the bot's incoming message
+        const botMsgId = String(Date.now() + 1);
+
         try {
-            const data = await apiPost("/api/chat", {
-                chat_id: activeChatId,
-                message: userMsgText
+            const response = await fetch("/api/chat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    chat_id: activeChatId,
+                    message: userMsgText
+                }),
+                credentials: "same-origin"
             });
 
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || "Server error occurred");
+            }
+
+            // Append bot message placeholder
             setMessages((prev) => [
                 ...prev,
                 {
-                    id: Date.now() + 1,
+                    id: botMsgId,
                     from: "bot",
-                    text: data.answer,
+                    text: "",
                 },
             ]);
-        } catch (err) {
-            console.error("Failed to send message:", err);
-            setMessages((prev) => [
-                ...prev,
-                {
-                    id: Date.now() + 1,
-                    from: "bot",
-                    text: "Sorry, I encountered an error while processing your request. Please check if your Gemini API key is configured correctly in the backend.",
-                },
-            ]);
-        } finally {
+
+            // Turn off initial loading state to hide thinking indicator as we stream
             setLoading(false);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let accumulatedText = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split("\n");
+
+                for (const line of lines) {
+                    const trimmedLine = line.trim();
+                    if (trimmedLine.startsWith("data: ")) {
+                        const dataStr = trimmedLine.slice(6).trim();
+                        if (dataStr === "[DONE]") {
+                            break;
+                        }
+                        try {
+                            const parsed = JSON.parse(dataStr);
+                            if (parsed.text) {
+                                accumulatedText += parsed.text;
+                                setMessages((prev) =>
+                                    prev.map((msg) =>
+                                        msg.id === botMsgId
+                                            ? { ...msg, text: accumulatedText }
+                                            : msg
+                                    )
+                                );
+                            } else if (parsed.error) {
+                                console.warn("Stream error parsed:", parsed.error);
+                                accumulatedText = `Error: ${parsed.error}`;
+                                setMessages((prev) =>
+                                    prev.map((msg) =>
+                                        msg.id === botMsgId
+                                            ? { ...msg, text: accumulatedText }
+                                            : msg
+                                    )
+                                );
+                            }
+                        } catch (e) {
+                            // Suppress parsing errors for partial segments
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn("Failed to send message/stream:", err);
+            
+            // Clean up loader and add fallback error message
+            setLoading(false);
+            setMessages((prev) => {
+                // If bot message placeholder was already added, update it. Otherwise add new one.
+                const exists = prev.some(m => m.id === botMsgId);
+                if (exists) {
+                    return prev.map(msg => 
+                        msg.id === botMsgId 
+                            ? { ...msg, text: "Sorry, I encountered an error while processing your request. Please check if your Gemini API key is configured correctly in the backend." }
+                            : msg
+                    );
+                } else {
+                    return [
+                        ...prev,
+                        {
+                            id: botMsgId,
+                            from: "bot",
+                            text: "Sorry, I encountered an error while processing your request. Please check if your Gemini API key is configured correctly in the backend.",
+                        }
+                    ];
+                }
+            });
         }
     };
 
@@ -160,9 +244,9 @@ export default function Chat({ activeChatId }) {
                                     m.from === "user"
                                         ? "bg-blue-600 text-white rounded-br-sm"
                                         : "bg-gray-700 text-gray-100 rounded-bl-sm"
-                                }`}
+                                    }`}
                             >
-                                {m.text}
+                                {m.text || <span className="text-xs text-gray-450 italic">Streaming...</span>}
                             </div>
                         </div>
                     ))
@@ -198,7 +282,7 @@ export default function Chat({ activeChatId }) {
                     <button
                         onClick={send}
                         disabled={loading || !input.trim()}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-400 transition-colors text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-400 transition-colors text-white px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer"
                     >
                         Send
                     </button>

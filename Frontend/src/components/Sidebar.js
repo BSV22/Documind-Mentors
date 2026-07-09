@@ -1,4 +1,6 @@
-import { useState, useEffect, useContext } from "react";
+"use client";
+
+import { useState, useEffect, useContext, useCallback } from "react";
 import { AuthContext } from "../context/AuthContext";
 import { apiGet, apiPost, apiDelete } from "../utils/api";
 
@@ -20,7 +22,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
   const [uploadError, setUploadError] = useState("");
 
   // Fetch Chats
-  const fetchChats = async () => {
+  const fetchChats = useCallback(async () => {
     setLoadingChats(true);
     try {
       const data = await apiGet("/api/chats");
@@ -33,10 +35,10 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
     } finally {
       setLoadingChats(false);
     }
-  };
+  }, [activeChatId, setActiveChatId]);
 
   // Fetch Documents
-  const fetchDocuments = async () => {
+  const fetchDocuments = useCallback(async () => {
     setLoadingDocs(true);
     try {
       const data = await apiGet("/api/documents");
@@ -46,14 +48,17 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
     } finally {
       setLoadingDocs(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (auth.isAuthenticated) {
-      fetchChats();
-      fetchDocuments();
+      const timer = setTimeout(() => {
+        fetchChats();
+        fetchDocuments();
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  }, [auth.isAuthenticated]);
+  }, [auth.isAuthenticated, fetchChats, fetchDocuments]);
 
   // Create Chat
   const handleCreateChat = async () => {
@@ -88,7 +93,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
   const handleUploadDocument = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!file.name.toLowerCase().endswith(".pdf")) {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
       setUploadError("Only PDF documents are supported.");
       return;
     }
@@ -175,7 +180,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
             <button
               key={item.id}
               onClick={() => setActivePanel(item.id)}
-              className={`text-center rounded-xl px-2 py-2 text-xs font-semibold uppercase tracking-wider transition-all ${
+              className={`text-center rounded-xl px-2 py-2 text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer ${
                 activePanel === item.id
                   ? "bg-cyan-500 text-gray-950 shadow-lg"
                   : "bg-gray-800 text-gray-300 hover:bg-gray-700"
@@ -199,7 +204,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
               </div>
               <button
                 onClick={handleCreateChat}
-                className="bg-cyan-500 hover:bg-cyan-400 text-gray-950 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
+                className="bg-cyan-500 hover:bg-cyan-400 text-gray-950 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 + New Chat
               </button>
@@ -209,7 +214,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
               <p className="text-sm text-cyan-400 text-center py-4">Loading chats...</p>
             ) : chats.length === 0 ? (
               <div className="text-center py-8 text-gray-500 text-sm">
-                No chats found. Click "New Chat" to start!
+                No chats found. Click &quot;New Chat&quot; to start!
               </div>
             ) : (
               <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
@@ -229,7 +234,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
                     </div>
                     <button
                       onClick={(e) => handleDeleteChat(e, item.id)}
-                      className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                      className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 cursor-pointer"
                       title="Delete chat"
                     >
                       🗑️
@@ -290,7 +295,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
                       </div>
                       <button
                         onClick={() => handleDeleteDocument(doc.id)}
-                        className="text-gray-500 hover:text-red-400 p-1 text-xs"
+                        className="text-gray-500 hover:text-red-400 p-1 text-xs cursor-pointer"
                         title="Remove document"
                       >
                         ❌
@@ -328,7 +333,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
             
             <button
               onClick={auth.logout}
-              className="w-full bg-red-650 hover:bg-red-750 text-white rounded-2xl py-2.5 text-sm font-semibold transition"
+              className="w-full bg-red-600 hover:bg-red-700 text-white rounded-2xl py-2.5 text-sm font-semibold transition cursor-pointer"
             >
               Sign Out
             </button>

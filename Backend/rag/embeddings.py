@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import os
 from google import genai
+from google.genai import types
 
 
 class EmbeddingModel(ABC):
@@ -24,7 +25,8 @@ class GeminiEmbedding(EmbeddingModel):
 
         result = client.models.embed_content(
             model=self.model,
-            contents=text
+            contents=text,
+            config=types.EmbedContentConfig(output_dimensionality=768)
         )
 
         return result.embeddings[0].values

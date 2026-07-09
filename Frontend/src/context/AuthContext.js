@@ -1,3 +1,5 @@
+"use client";
+
 import { createContext, useState, useEffect, useCallback, useContext } from 'react';
 import { apiGet, apiPost } from '../utils/api';
 
@@ -12,12 +14,17 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const data = await apiGet('/api/auth/me');
-        if (data && data.user) {
-          setUser(data.user);
+        const response = await fetch('/api/auth/me', { credentials: 'same-origin' });
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.user) {
+            setUser(data.user);
+          }
+        } else {
+          console.log('No active session found.');
         }
       } catch (err) {
-        console.log('No active session found.');
+        console.log('Session check failed:', err);
       } finally {
         setLoading(false);
       }
@@ -26,7 +33,6 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = useCallback((token, userData = null) => {
-    // userData contains the user details returned from backend signin/signup/google endpoints
     setUser(userData);
     setError(null);
     return true;

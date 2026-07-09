@@ -10,14 +10,14 @@ class Retriever:
     def retrieve(self,
                  question,
                  user_id=None,
-                 top_k=3):
+                 top_k=5):
 
         query_embedding = self.embedding_model.embed(question)
 
-        filter_dict = {"user_id": user_id} if user_id is not None else None
-
-        return self.vector_store.search(
-            query_embedding,
-            k=top_k,
-            filter_dict=filter_dict
+        # Call the new hybrid_search on vector_store passing both vector and text query
+        return self.vector_store.hybrid_search(
+            query_embedding=query_embedding,
+            query_text=question,
+            user_id=user_id,
+            k=top_k
         )
