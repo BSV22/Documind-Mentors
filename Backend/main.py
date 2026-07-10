@@ -19,8 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Run schema initialization and migrations
-init_db()
+# Run schema initialization and migrations on startup
+@app.on_event("startup")
+def startup_event():
+    init_db()
+
 
 # Include Routers
 app.include_router(auth.router)
