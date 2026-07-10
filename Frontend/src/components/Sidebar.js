@@ -18,7 +18,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
   const [documents, setDocuments] = useState([]);
   const [loadingChats, setLoadingChats] = useState(false);
   const [loadingDocs, setLoadingDocs] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState(false);  
   const [uploadError, setUploadError] = useState("");
 
   // Fetch Chats
@@ -217,7 +217,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
                 No chats found. Click &quot;New Chat&quot; to start!
               </div>
             ) : (
-              <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-87.5 overflow-y-auto pr-1">
                 {chats.map((item) => (
                   <div
                     key={item.id}
@@ -275,7 +275,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
             {uploadError && (
               <p className="text-xs text-red-400 text-center px-2">{uploadError}</p>
             )}
-
+  
             {/* List of Documents */}
             <div className="space-y-2">
               <h4 className="text-xs uppercase tracking-wider text-gray-400 font-semibold">Indexed PDFs</h4>
@@ -286,7 +286,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
                   No custom documents uploaded. The default general knowledge PDF is active.
                 </div>
               ) : (
-                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-55 overflow-y-auto pr-1">
                   {documents.map((doc) => (
                     <div key={doc.id} className="rounded-2xl border border-gray-850 bg-gray-850/50 p-2.5 flex items-center justify-between gap-2">
                       <div className="overflow-hidden">
@@ -323,7 +323,7 @@ export default function Sidebar({ isOpen = true, activeChatId, setActiveChatId }
             <div className="space-y-2 rounded-3xl border border-gray-800 bg-gray-800 p-3">
               <div className="flex items-center justify-between text-sm text-gray-300">
                 <span>Email</span>
-                <span className="text-xs truncate max-w-[200px]">{auth.user?.email || "N/A"}</span>
+                <span className="text-xs truncate max-w-50">{auth.user?.email || "N/A"}</span>
               </div>
               <div className="flex items-center justify-between text-sm text-gray-300">
                 <span>Account Type</span>

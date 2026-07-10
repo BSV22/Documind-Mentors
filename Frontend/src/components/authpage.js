@@ -119,8 +119,9 @@ export default function AuthPage({ onAuthSuccess }) {
             <GoogleLogin
               onSuccess={handleGoogleSuccess}
               onError={handleGoogleError}
-              theme="dark"
+              theme="filled_blue"
               size="large"
+              shape="pill"
             />
           )}
         </div>

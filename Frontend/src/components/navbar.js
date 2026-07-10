@@ -20,9 +20,8 @@ const Navbar = ({ onToggleSidebar, sidebarOpen }) => {
                     </div>
 
                     <ul className="flex items-center gap-8 text-white">
-                        <li className="cursor-pointer hover:text-gray-300">Home</li>
-                        <li className="cursor-pointer hover:text-gray-300">About</li>
-                        <li className="cursor-pointer hover:text-gray-300">Contact</li>
+                        <li className="cursor-pointer hover:text-gray-300"> <a href="https://github.com/Documind-ACA-Summer-Project-2026" target='1'>About</a></li>
+                        <li className="cursor-pointer hover:text-gray-300"> <a href="https://github.com/orgs/Documind-ACA-Summer-Project-2026/people" target='2'>Contact</a></li>
                     </ul>
                 </div>
             </nav>

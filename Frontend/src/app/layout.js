@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "Documind - Private Vector & RAG Space",
-  description: "Secure, scalable document search and private assistant Powered by pgvector and Gemini.",
+  title: "Documind : RAG ",
+  description: "Secure, scalable document search and private assistant.",
 };
 
 export default function RootLayout({ children }) {
