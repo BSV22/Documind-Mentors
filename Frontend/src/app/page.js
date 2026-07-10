@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Navbar from '../components/navbar';
 import Footer from '../components/footer';
 import Chat from '../components/Chat';
@@ -9,9 +9,14 @@ import AuthPage from '../components/authpage';
 import { useAuth } from '../context/AuthContext';
 
 export default function Home() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [showSidebar, setShowSidebar] = useState(true);
   const [activeChatId, setActiveChatId] = useState(null);
+
+  // Reset active chat when user logs out or switches accounts
+  useEffect(() => {
+    setActiveChatId(null);
+  }, [user?.id]);
 
   if (loading) {
     return (

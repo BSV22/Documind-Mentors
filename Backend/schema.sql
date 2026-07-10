@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(255),
     email VARCHAR(255) UNIQUE,
     password_hash VARCHAR(255),
-    google_sub VARCHAR(255) UNIQUE
+    google_sub VARCHAR(255) UNIQUE,
+    is_verified BOOLEAN DEFAULT FALSE,
+    otp_code VARCHAR(6),
+    otp_expires_at TIMESTAMP
 );
 
 -- Create Documents table
