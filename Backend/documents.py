@@ -47,7 +47,7 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
         
     doc_id = str(uuid.uuid4())
-    upload_dir = "data/documents"
+    upload_dir = "/tmp" if os.environ.get("VERCEL") else "data/documents"
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, f"{doc_id}.pdf")
     
@@ -108,7 +108,8 @@ def delete_document(doc_id: str, current_user: dict = Depends(get_current_user))
             # Remove from vector store
             store.delete_document(doc_id)
             
-            file_path = f"data/documents/{doc_id}.pdf"
+            upload_dir = "/tmp" if os.environ.get("VERCEL") else "data/documents"
+            file_path = os.path.join(upload_dir, f"{doc_id}.pdf")
             if os.path.exists(file_path):
                 os.remove(file_path)
                 
