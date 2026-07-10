@@ -10,7 +10,9 @@ from google.auth.transport import requests
 
 from config import JWT_SECRET, ALGORITHM
 from database import get_db_connection
-from schemas import SignupRequest, SigninRequest, GoogleAuthRequest, VerifyOtpRequest, ResendOtpRequest
+from schemas import SignupRequest, SigninRequest, GoogleAuthRequest, VerifyOtpRequest, ResendOtpRequest, ForgotPasswordRequest, ResetPasswordRequest
+from email_utils import send_otp_email
+
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -112,10 +114,8 @@ def signup(req: SignupRequest, response: Response):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
-    # Log the OTP to uvicorn console logs for local verification/development
-    print(f"\n==========================================")
-    print(f"[OTP Verification] Code for {req.email} is: {otp_code}")
-    print(f"==========================================\n")
+    # Send verification email (falls back to console printing if SMTP is not configured)
+    send_otp_email(req.email, otp_code)
     
     return {"status": "verification_required", "email": req.email}
 
@@ -197,10 +197,8 @@ def resend_otp(req: ResendOtpRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
         
-    # Log the OTP to uvicorn console logs for local verification/development
-    print(f"\n==========================================")
-    print(f"[OTP Verification] Resent Code for {req.email} is: {otp_code}")
-    print(f"==========================================\n")
+    # Send verification email (falls back to console printing if SMTP is not configured)
+    send_otp_email(req.email, otp_code)
     
     return {"status": "success", "message": "Verification code resent successfully"}
 
@@ -292,3 +290,71 @@ def get_me(current_user: dict = Depends(get_current_user)):
 def signout(response: Response):
     response.delete_cookie(key="access_token", path="/")
     return {"status": "success"}
+
+@router.post("/forgot-password")
+def forgot_password(req: ForgotPasswordRequest):
+    import random
+    otp_code = f"{random.randint(100000, 999999)}"
+    otp_expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=10)
+    
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute("SELECT id FROM users WHERE email = %s", (req.email,))
+                user = cursor.fetchone()
+                
+                if not user:
+                    raise HTTPException(status_code=404, detail="Email address not found")
+                
+                cursor.execute(
+                    "UPDATE users SET otp_code = %s, otp_expires_at = %s WHERE id = %s",
+                    (otp_code, otp_expires_at, user["id"])
+                )
+                conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+    # Send verification email
+    send_otp_email(req.email, otp_code)
+    
+    return {"status": "success", "message": "Password reset code sent successfully"}
+
+@router.post("/reset-password")
+def reset_password(req: ResetPasswordRequest):
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
+                cursor.execute(
+                    "SELECT id, otp_code, otp_expires_at FROM users WHERE email = %s",
+                    (req.email,)
+                )
+                user = cursor.fetchone()
+                
+                if not user:
+                    raise HTTPException(status_code=404, detail="User not found")
+                
+                if not user["otp_code"] or not user["otp_expires_at"]:
+                    raise HTTPException(status_code=400, detail="No reset code requested for this email")
+                
+                if user["otp_code"] != req.otp:
+                    raise HTTPException(status_code=400, detail="Invalid verification code")
+                
+                now = datetime.datetime.utcnow()
+                if user["otp_expires_at"] < now:
+                    raise HTTPException(status_code=400, detail="Verification code has expired")
+                
+                hashed = hash_password(req.new_password)
+                cursor.execute(
+                    "UPDATE users SET password_hash = %s, otp_code = NULL, otp_expires_at = NULL WHERE id = %s",
+                    (hashed, user["id"])
+                )
+                conn.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+    return {"status": "success", "message": "Password reset successfully. You can now sign in."}
+

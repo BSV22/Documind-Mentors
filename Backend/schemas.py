@@ -25,3 +25,12 @@ class CreateChatRequest(BaseModel):
 class ChatRequest(BaseModel):
     chat_id: str
     message: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
